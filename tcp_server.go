@@ -10,16 +10,18 @@ import (
 // Client holds info about connection
 type Client struct {
 	conn   net.Conn
-	Server *server
+	Server *Server
 }
 
 // TCP server
-type server struct {
+type Server struct {
 	address                  string // Address to open connection: localhost:9999
 	config                   *tls.Config
 	onNewClientCallback      func(c *Client)
 	onClientConnectionClosed func(c *Client, err error)
 	onNewMessage             func(c *Client, message string)
+	listener                 net.Listener
+	quit                     chan struct{}
 }
 
 // Read client data from channel
@@ -61,36 +63,44 @@ func (c *Client) Close() error {
 }
 
 // Called right after server starts listening new client
-func (s *server) OnNewClient(callback func(c *Client)) {
+func (s *Server) OnNewClient(callback func(c *Client)) {
 	s.onNewClientCallback = callback
 }
 
 // Called right after connection closed
-func (s *server) OnClientConnectionClosed(callback func(c *Client, err error)) {
+func (s *Server) OnClientConnectionClosed(callback func(c *Client, err error)) {
 	s.onClientConnectionClosed = callback
 }
 
 // Called when Client receives new message
-func (s *server) OnNewMessage(callback func(c *Client, message string)) {
+func (s *Server) OnNewMessage(callback func(c *Client, message string)) {
 	s.onNewMessage = callback
 }
 
 // Listen starts network server
-func (s *server) Listen() {
-	var listener net.Listener
+func (s *Server) Listen() {
 	var err error
 	if s.config == nil {
-		listener, err = net.Listen("tcp", s.address)
+		s.listener, err = net.Listen("tcp", s.address)
 	} else {
-		listener, err = tls.Listen("tcp", s.address, s.config)
+		s.listener, err = tls.Listen("tcp", s.address, s.config)
 	}
 	if err != nil {
 		log.Fatal("Error starting TCP server.\r\n", err)
 	}
-	defer listener.Close()
+	defer s.listener.Close()
 
 	for {
-		conn, _ := listener.Accept()
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-s.quit:
+				return
+			default:
+				log.Fatal("Error accepting connection.\r\n", err)
+			}
+			continue
+		}
 		client := &Client{
 			conn:   conn,
 			Server: s,
@@ -99,11 +109,18 @@ func (s *server) Listen() {
 	}
 }
 
+// Close server
+func (s *Server) Close() error {
+	close(s.quit)
+	return s.listener.Close() // To trigger an error in listen accept loop
+}
+
 // Creates new tcp server instance
-func New(address string) *server {
+func New(address string) *Server {
 	log.Println("Creating server with address", address)
-	server := &server{
+	server := &Server{
 		address: address,
+		quit:    make(chan struct{}),
 	}
 
 	server.OnNewClient(func(c *Client) {})
@@ -113,7 +130,7 @@ func New(address string) *server {
 	return server
 }
 
-func NewWithTLS(address, certFile, keyFile string) *server {
+func NewWithTLS(address, certFile, keyFile string) *Server {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		log.Fatal("Error loading certificate files. Unable to create TCP server with TLS functionality.\r\n", err)
