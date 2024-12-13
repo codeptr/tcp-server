@@ -1,3 +1,3 @@
-module github.com/firstrow/tcp_server
+module github.com/codeptr/tcp-server
 
 go 1.13
