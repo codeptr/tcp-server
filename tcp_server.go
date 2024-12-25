@@ -117,7 +117,7 @@ func (s *Server) Close() error {
 
 // Creates new tcp server instance
 func New(address string) *Server {
-	log.Println("Creating server with address", address)
+	//log.Println("Creating server with address", address)
 	server := &Server{
 		address: address,
 		quit:    make(chan struct{}),
